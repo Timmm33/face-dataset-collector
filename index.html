@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediaPipe 人物與情緒資料集採集器</title>
+    <!-- 1. 載入 MediaPipe 關鍵套件 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/face_detection.js" crossorigin="anonymous"></script>
+    <!-- 2. 載入打包 ZIP 的套件 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: #1e1e2f; color: #fff; text-align: center; padding: 20px; }
+        .container { max-width: 850px; margin: 0 auto; background: rgba(255,255,255,0.05); padding: 25px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h2 { color: #4facfe; margin-bottom: 10px; }
+        p { color: #aaa; margin-bottom: 20px; font-size: 0.95rem; }
+        
+        .control-panel { margin: 20px 0; display: flex; justify-content: center; gap: 12px; align-items: center; flex-wrap: wrap; }
+        label { font-size: 0.95rem; }
+        select, button { padding: 10px 16px; font-size: 0.95rem; border-radius: 25px; border: none; outline: none; }
+        select { background: #2d2b55; color: #fff; border: 1px solid #00f2fe; cursor: pointer; }
+        
+        .btn-capture { background: linear-gradient(45deg, #00f2fe, #4facfe); color: #fff; font-weight: bold; cursor: pointer; transition: transform 0.2s; }
+        .btn-capture:active { transform: scale(0.95); }
+        .btn-download { background: linear-gradient(45deg, #11998e, #38ef7d); color: #fff; font-weight: bold; cursor: pointer; }
+        
+        .counter-panel { margin: 15px 0; background: rgba(0,0,0,0.3); padding: 15px; border-radius: 12px; font-size: 0.9rem; text-align: left; }
+        .counter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+        .counter-group { background: rgba(255,255,255,0.05); padding: 8px 12px; border-radius: 8px; }
+        .counter-group h4 { color: #00f2fe; margin-bottom: 5px; font-size: 0.95rem; }
+        
+        .preview-box { display: flex; justify-content: center; gap: 20px; margin-top: 20px; flex-wrap: wrap; }
+        .video-wrapper { position: relative; width: 320px; height: 240px; }
+        video { width: 100%; height: 100%; border-radius: 12px; border: 2px solid #555; background: #000; object-fit: cover; }
+        canvas#cropped_canvas { width: 200px; height: 200px; border-radius: 12px; border: 2px solid #00f2fe; background: #000; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>MediaPipe 人物與情緒資料集採集器</h2>
+    <p>系統會自動偵測並裁切純人臉範圍，自動歸類至指定人物與情緒標籤。</p>
+    
+    <div class="control-panel">
+        <label for="personSelect">人物：</label>
+        <select id="personSelect">
+            <option value="紀律廷">紀律廷</option>
+            <option value="趙科翰">趙科翰</option>
+            <option value="莊媗丞">莊媗丞</option>
+            <option value="姜昀廷">姜昀廷</option>
+        </select>
+
+        <label for="emotionSelect">情緒：</label>
+        <select id="emotionSelect">
+            <option value="正面">正面</option>
+            <option value="負面">負面</option>
+            <option value="平靜">平靜</option>
+        </select>
+
+        <button class="btn-capture" onclick="takeSnapshot()">拍照截取人臉</button>
+        <button class="btn-download" onclick="downloadZip()">下載打包 (.zip)</button>
+    </div>
+
+    <div class="counter-panel">
+        <strong>目前收集張數統計：</strong>
+        <div class="counter-grid">
+            <div class="counter-group">
+                <h4>紀律廷</h4>
+                正面: <b id="count-紀律廷-正面" style="color:#00f2fe">0</b> | 
+                負面: <b id="count-紀律廷-負面" style="color:#ff4b2b">0</b> | 
+                平靜: <b id="count-紀律廷-平靜" style="color:#e0e0e0">0</b>
+            </div>
+            <div class="counter-group">
+                <h4>趙科翰</h4>
+                正面: <b id="count-趙科翰-正面" style="color:#00f2fe">0</b> | 
+                負面: <b id="count-趙科翰-負面" style="color:#ff4b2b">0</b> | 
+                平靜: <b id="count-趙科翰-平靜" style="color:#e0e0e0">0</b>
+            </div>
+            <div class="counter-group">
+                <h4>莊媗丞</h4>
+                正面: <b id="count-莊媗丞-正面" style="color:#00f2fe">0</b> | 
+                負面: <b id="count-莊媗丞-負面" style="color:#ff4b2b">0</b> | 
+                平靜: <b id="count-莊媗丞-平靜" style="color:#e0e0e0">0</b>
+            </div>
+            <div class="counter-group">
+                <h4>姜昀廷</h4>
+                正面: <b id="count-姜昀廷-正面" style="color:#00f2fe">0</b> | 
+                負面: <b id="count-姜昀廷-負面" style="color:#ff4b2b">0</b> | 
+                平靜: <b id="count-姜昀廷-平靜" style="color:#e0e0e0">0</b>
+            </div>
+        </div>
+    </div>
+
+    <div class="preview-box">
+        <div>
+            <h3>原始視訊畫面</h3>
+            <div class="video-wrapper">
+                <video id="input_video" autoplay playsinline muted></video>
+            </div>
+        </div>
+        <div>
+            <h3>MediaPipe 自動裁切 (200x200)</h3>
+            <canvas id="cropped_canvas" width="200" height="200"></canvas>
+        </div>
+    </div>
+</div>
+
+<script>
+    const videoElement = document.getElementById('input_video');
+    const croppedCanvas = document.getElementById('cropped_canvas');
+    const croppedCtx = croppedCanvas.getContext('2d');
+    
+    // 初始化 12 個類別的儲存空間
+    const dataset = {
+        "紀律廷-正面": [],
+        "紀律廷-負面": [],
+        "紀律廷-平靜": [],
+        "趙科翰-正面": [],
+        "趙科翰-負面": [],
+        "趙科翰-平靜": [],
+        "莊媗丞-正面": [],
+        "莊媗丞-負面": [],
+        "莊媗丞-平靜": [],
+        "姜昀廷-正面": [],
+        "姜昀廷-負面": [],
+        "姜昀廷-平靜": []
+    };
+
+    // 初始化 MediaPipe Face Detection
+    const faceDetection = new FaceDetection({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_detection/${file}`
+    });
+
+    faceDetection.setOptions({
+        model: 'short',          // 適合近距離 Webcam
+        minDetectionConfidence: 0.5
+    });
+
+    faceDetection.onResults(onResults);
+
+    // 啟動視訊鏡頭
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await faceDetection.send({image: videoElement});
+        },
+        width: 640,
+        height: 480
+    });
+    camera.start();
+
+    // 處理 MediaPipe 回傳的人臉座標
+    function onResults(results) {
+        if (results.detections && results.detections.length > 0) {
+            const bbox = results.detections[0].boundingBox;
+            
+            // 計算人臉實際像素位置
+            let w = bbox.width * videoElement.videoWidth;
+            let h = bbox.height * videoElement.videoHeight;
+            let x = bbox.xCenter * videoElement.videoWidth - w / 2;
+            let y = bbox.yCenter * videoElement.videoHeight - h / 2;
+
+            // 適度增加 20% 邊界
+            const padding = 0.2;
+            x = Math.max(0, x - w * padding / 2);
+            y = Math.max(0, y - h * padding / 2);
+            w = Math.min(videoElement.videoWidth - x, w * (1 + padding));
+            h = Math.min(videoElement.videoHeight - y, h * (1 + padding));
+
+            // 將視訊畫面的臉部區域拉伸畫到 200x200 的 Canvas 上
+            croppedCtx.clearRect(0, 0, 200, 200);
+            croppedCtx.drawImage(videoElement, x, y, w, h, 0, 0, 200, 200);
+        } else {
+            // 未偵測到人臉時清空畫面
+            croppedCtx.fillStyle = '#000';
+            croppedCtx.fillRect(0, 0, 200, 200);
+        }
+    }
+
+    // 拍照並暫存至對應標籤 (例如：莊媗丞-正面)
+    function takeSnapshot() {
+        const person = document.getElementById('personSelect').value;
+        const emotion = document.getElementById('emotionSelect').value;
+        const label = `${person}-${emotion}`;
+
+        const dataUrl = croppedCanvas.toDataURL('image/png');
+        
+        if (dataset[label]) {
+            dataset[label].push(dataUrl);
+            updateCounter();
+        }
+    }
+
+    // 更新介面張數計數器
+    function updateCounter() {
+        for (const label in dataset) {
+            const el = document.getElementById(`count-${label}`);
+            if (el) {
+                el.innerText = dataset[label].length;
+            }
+        }
+    }
+
+    // 打包下載成 Zip 檔
+    function downloadZip() {
+        const zip = new JSZip();
+        let totalImages = 0;
+
+        for (const [label, images] of Object.entries(dataset)) {
+            if (images.length > 0) {
+                const folder = zip.folder(label);
+                images.forEach((imgData, index) => {
+                    const base64Data = imgData.replace(/^data:image\/png;base64,/, "");
+                    folder.file(`${label}_${index + 1}.png`, base64Data, {base64: true});
+                    totalImages++;
+                });
+            }
+        }
+
+        if (totalImages === 0) {
+            alert("請先至少拍攝一張照片再下載！");
+            return;
+        }
+
+        zip.generateAsync({type: "blob"}).then(function(content) {
+            saveAs(content, "人臉情緒資料集.zip");
+        });
+    }
+</script>
+</body>
+</html>
